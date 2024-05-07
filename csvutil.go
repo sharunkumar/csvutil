@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"io"
+	"net/http"
 	"reflect"
 )
 
@@ -125,6 +126,53 @@ func Marshal(v any) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// Marshal returns the CSV encoding of slice or array v. If v is not a slice or
+// elements are not structs then Marshal returns InvalidMarshalError.
+//
+// Marshal uses the std encoding/csv.Writer with its default settings for csv
+// encoding.
+//
+// Marshal will always encode the CSV header even for the empty slice.
+//
+// For the exact encoding rules look at Encoder.Encode method.
+func HttpMarshal(v any, httpWriter http.ResponseWriter) error {
+	val := walkValue(reflect.ValueOf(v))
+
+	if !val.IsValid() {
+		return &InvalidMarshalError{}
+	}
+
+	switch val.Kind() {
+	case reflect.Array, reflect.Slice:
+	default:
+		return &InvalidMarshalError{Type: reflect.ValueOf(v).Type()}
+	}
+
+	typ := walkType(val.Type().Elem())
+	if typ.Kind() != reflect.Struct {
+		return &InvalidMarshalError{Type: reflect.ValueOf(v).Type()}
+	}
+
+	// var buf bytes.Buffer
+	w := csv.NewWriter(httpWriter)
+	enc := NewEncoder(w)
+
+	if err := enc.encodeHeader(typ); err != nil {
+		return err
+	}
+
+	if err := enc.encodeArray(val); err != nil {
+		return err
+	}
+
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func countRecords(s []byte) (n int) {
